@@ -3,7 +3,7 @@ import re
 import json
 import logging
 from flask import Flask, request
-from curl_cffi import requests as curl_requests  # 👈 এই লাইব্রেরি ব্যবহার করছি
+from curl_cffi import requests as curl_requests  # 👈 লাইব্রেরি
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -28,13 +28,13 @@ def extract_links_from_html(html: str) -> list:
 
 def bypass_hubcloud(url: str) -> dict:
     """
-    curl_cffi ব্যবহার করে HubCloud বাইপাস করা
+    curl_cffi ব্যবহার করে HubCloud বাইপাস করা (chrome110 ইম্পারসোনেশন)
     """
     try:
-        # 👇 Chrome-এর মতো ইম্পারসোনেট করা
-        session = curl_requests.Session(impersonate="chrome120")
+        # 👇 Chrome 110 ইম্পারসোনেশন (সাপোর্টেড)
+        session = curl_requests.Session(impersonate="chrome110")
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Accept-Encoding": "gzip, deflate, br",
@@ -46,14 +46,14 @@ def bypass_hubcloud(url: str) -> dict:
             "Sec-Fetch-User": "?1",
         })
 
-        # ১. vifix.site কে hubcloud.one-এ রূপান্তর (যদি প্রয়োজন)
+        # ১. vifix.site কে hubcloud.one-এ রূপান্তর
         target_url = url
         if re.match(r'^https://vifix\.site/hubcloud/([a-z0-9]+)$', url, re.IGNORECASE):
             file_id = url.split("/")[-1]
             target_url = f"https://hubcloud.one/drive/{file_id}"
             logger.info(f"Converted vifix.site URL to: {target_url}")
 
-        # ২. প্রথম পেজ ফেচ (curl_cffi দিয়ে)
+        # ২. প্রথম পেজ ফেচ
         resp1 = session.get(target_url, timeout=30, allow_redirects=True)
         resp1.raise_for_status()
         html1 = resp1.text
@@ -72,7 +72,6 @@ def bypass_hubcloud(url: str) -> dict:
         hubcloud_php_url = download_node['href']
         # relative URL ঠিক করা
         if hubcloud_php_url.startswith('/'):
-            # URL পার্স করার জন্য urllib ব্যবহার
             from urllib.parse import urlparse
             parsed = urlparse(target_url)
             hubcloud_php_url = f"{parsed.scheme}://{parsed.netloc}{hubcloud_php_url}"
@@ -82,7 +81,7 @@ def bypass_hubcloud(url: str) -> dict:
 
         logger.info(f"Found hubcloud.php URL: {hubcloud_php_url}")
 
-        # ৪. hubcloud.php পেজ ফেচ (curl_cffi দিয়ে)
+        # ৪. hubcloud.php পেজ ফেচ
         resp2 = session.get(hubcloud_php_url, timeout=30, allow_redirects=True)
         resp2.raise_for_status()
         html2 = resp2.text
@@ -96,7 +95,7 @@ def bypass_hubcloud(url: str) -> dict:
             if not href:
                 continue
 
-            # বিভিন্ন টাইপ শনাক্ত করা (HTML-এর মতোই)
+            # বিভিন্ন টাইপ শনাক্ত করা
             if 'r2.dev' in href or 'cloudflare' in href:
                 direct_links.append({
                     "url": href,
@@ -165,7 +164,6 @@ def send_telegram_message(chat_id: int, text: str, parse_mode: str = "Markdown",
         "disable_web_page_preview": disable_web_page_preview
     }
     try:
-        # নোট: এখানে আমরা সাধারণ requests ব্যবহার করছি, কারণ এটা Telegram API-তে request
         import requests
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
