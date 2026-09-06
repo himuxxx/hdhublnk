@@ -41,7 +41,7 @@ def bypass_hubcloud(url: str) -> dict:
         target_url = url
         if re.match(r'^https://vifix\.site/hubcloud/([a-z0-9]+)$', url, re.IGNORECASE):
             file_id = url.split("/")[-1]
-            target_url = f"https://hubcloud.one/drive/{file_id}"
+            target_url = f"https://hubcloud.cx/drive/{file_id}"
             logger.info(f"Converted vifix.site URL to: {target_url}")
 
         # ২. প্রথম পেজ ফেচ
@@ -199,7 +199,7 @@ def webhook():
             if text == '/start':
                 send_telegram_message(
                     chat_id,
-                    "👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.one/drive/xxxxx`"
+                    "👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.cx/drive/xxxxx`"
                 )
             elif text == '/help':
                 send_telegram_message(
