@@ -2,9 +2,8 @@ import os
 import re
 import json
 import logging
-import requests
-import cloudscraper
 from flask import Flask, request
+from curl_cffi import requests as curl_requests  # 👈 এই লাইব্রেরি ব্যবহার করছি
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -14,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 🔥 HubCloud Bypass (Cloudflare সাপোর্ট সহ)
+# 🔥 HubCloud Bypass (curl_cffi দিয়ে)
 # ============================================================
 
 def extract_links_from_html(html: str) -> list:
@@ -29,31 +28,33 @@ def extract_links_from_html(html: str) -> list:
 
 def bypass_hubcloud(url: str) -> dict:
     """
-    HubCloud লিংক বাইপাস করে সব ডাউনলোড লিংক বের করে।
-    cloudscraper ব্যবহার করে Cloudflare বাইপাস করে।
+    curl_cffi ব্যবহার করে HubCloud বাইপাস করা
     """
     try:
-        # ✅ Cloudscraper সেশন তৈরি
-        scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'mobile': False
-            }
-        )
-        scraper.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        # 👇 Chrome-এর মতো ইম্পারসোনেট করা
+        session = curl_requests.Session(impersonate="chrome120")
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
         })
 
-        # ১. vifix.site কে hubcloud.one-এ রূপান্তর
+        # ১. vifix.site কে hubcloud.one-এ রূপান্তর (যদি প্রয়োজন)
         target_url = url
         if re.match(r'^https://vifix\.site/hubcloud/([a-z0-9]+)$', url, re.IGNORECASE):
             file_id = url.split("/")[-1]
             target_url = f"https://hubcloud.one/drive/{file_id}"
             logger.info(f"Converted vifix.site URL to: {target_url}")
 
-        # ২. প্রথম পেজ ফেচ (cloudscraper দিয়ে)
-        resp1 = scraper.get(target_url, timeout=30, allow_redirects=True)
+        # ২. প্রথম পেজ ফেচ (curl_cffi দিয়ে)
+        resp1 = session.get(target_url, timeout=30, allow_redirects=True)
         resp1.raise_for_status()
         html1 = resp1.text
 
@@ -71,15 +72,18 @@ def bypass_hubcloud(url: str) -> dict:
         hubcloud_php_url = download_node['href']
         # relative URL ঠিক করা
         if hubcloud_php_url.startswith('/'):
-            parsed = requests.utils.urlparse(target_url)
+            # URL পার্স করার জন্য urllib ব্যবহার
+            from urllib.parse import urlparse
+            parsed = urlparse(target_url)
             hubcloud_php_url = f"{parsed.scheme}://{parsed.netloc}{hubcloud_php_url}"
         elif not hubcloud_php_url.startswith('http'):
-            hubcloud_php_url = requests.utils.urljoin(target_url, hubcloud_php_url)
+            from urllib.parse import urljoin
+            hubcloud_php_url = urljoin(target_url, hubcloud_php_url)
 
         logger.info(f"Found hubcloud.php URL: {hubcloud_php_url}")
 
-        # ৪. hubcloud.php পেজ ফেচ (cloudscraper দিয়ে)
-        resp2 = scraper.get(hubcloud_php_url, timeout=30, allow_redirects=True)
+        # ৪. hubcloud.php পেজ ফেচ (curl_cffi দিয়ে)
+        resp2 = session.get(hubcloud_php_url, timeout=30, allow_redirects=True)
         resp2.raise_for_status()
         html2 = resp2.text
 
@@ -92,7 +96,7 @@ def bypass_hubcloud(url: str) -> dict:
             if not href:
                 continue
 
-            # বিভিন্ন টাইপ শনাক্ত করা
+            # বিভিন্ন টাইপ শনাক্ত করা (HTML-এর মতোই)
             if 'r2.dev' in href or 'cloudflare' in href:
                 direct_links.append({
                     "url": href,
@@ -144,15 +148,9 @@ def bypass_hubcloud(url: str) -> dict:
 
         return {"success": True, "data": direct_links}
 
-    except cloudscraper.exceptions.CloudflareChallengeError as e:
-        logger.error(f"Cloudflare challenge error: {e}")
-        return {"success": False, "data": "⚠️ Cloudflare চ্যালেঞ্জ পার হওয়া যায়নি।"}
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error: {e}")
-        return {"success": False, "data": f"🌐 নেটওয়ার্ক এরর: {str(e)}"}
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return {"success": False, "data": f"⚠️ অজানা ত্রুটি: {str(e)}"}
+        logger.error(f"Bypass error: {e}")
+        return {"success": False, "data": f"⚠️ এরর: {str(e)}"}
 
 # ============================================================
 # 📤 টেলিগ্রামে মেসেজ পাঠানোর ফাংশন
@@ -167,6 +165,8 @@ def send_telegram_message(chat_id: int, text: str, parse_mode: str = "Markdown",
         "disable_web_page_preview": disable_web_page_preview
     }
     try:
+        # নোট: এখানে আমরা সাধারণ requests ব্যবহার করছি, কারণ এটা Telegram API-তে request
+        import requests
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
         return resp.json()
