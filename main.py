@@ -1,10 +1,9 @@
 import os
 import re
+import json
 import logging
 import requests
 from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -17,7 +16,7 @@ logger = logging.getLogger(__name__)
 # 🔥 HubCloud Bypass লজিক (HTML থেকে নেওয়া)
 # ============================================================
 
-def extract_links_from_html(html: str, base_url: str) -> list:
+def extract_links_from_html(html: str) -> list:
     """HTML থেকে সব <a> ট্যাগের href এবং text বের করে"""
     links = []
     pattern = r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'
@@ -30,7 +29,6 @@ def extract_links_from_html(html: str, base_url: str) -> list:
 def bypass_hubcloud(url: str) -> dict:
     """
     HubCloud লিংক বাইপাস করে সব ডাউনলোড লিংক বের করে।
-    HTML-এর extract() ফাংশনের মতো কাজ করে।
     """
     try:
         headers = {
@@ -52,7 +50,7 @@ def bypass_hubcloud(url: str) -> dict:
         html1 = resp1.text
 
         # ৩. #download আইডি থাকা <a> ট্যাগ খোঁজ
-        all_links = extract_links_from_html(html1, target_url)
+        all_links = extract_links_from_html(html1)
         download_node = None
         for link in all_links:
             if 'download' in link['href'].lower() or 'download' in link['text'].lower():
@@ -78,7 +76,7 @@ def bypass_hubcloud(url: str) -> dict:
         html2 = resp2.text
 
         # ৫. সব ডাউনলোড লিংক বের করা
-        all_links2 = extract_links_from_html(html2, hubcloud_php_url)
+        all_links2 = extract_links_from_html(html2)
         direct_links = []
 
         for link in all_links2:
@@ -146,68 +144,29 @@ def bypass_hubcloud(url: str) -> dict:
         return {"success": False, "data": f"⚠️ অজানা ত্রুটি: {str(e)}"}
 
 # ============================================================
-# 🤖 সিঙ্ক্রোনাস টেলিগ্রাম হ্যান্ডলার (async ছাড়া)
+# 📤 টেলিগ্রামে মেসেজ পাঠানোর ফাংশন
 # ============================================================
 
-def start(bot: Bot, update: Update):
-    bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.one/drive/xxxxx`"
-    )
-
-def help_command(bot: Bot, update: Update):
-    bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="📖 **কীভাবে ব্যবহার করবেন:**\n1️⃣ HubCloud লিংক পাঠান (টেক্সট মেসেজ হিসেবে)\n2️⃣ আমি সব ডাউনলোড লিংক বের করব\n\n🔰 **সাপোর্টেড লিংক:**\n- hubcloud.one\n- vifix.site/hubcloud/xxxxx"
-    )
-
-def handle_link(bot: Bot, update: Update):
-    user_input = update.message.text.strip()
-    if not re.match(r'^https?://', user_input):
-        bot.send_message(chat_id=update.effective_chat.id, text="❌ দয়া করে একটি বৈধ URL দিন (http:// বা https:// দিয়ে শুরু)।")
-        return
-
-    bot.send_message(chat_id=update.effective_chat.id, text="⏳ বাইপাস করা হচ্ছে, একটু অপেক্ষা করুন...")
-
-    result = bypass_hubcloud(user_input)
-
-    if not result["success"]:
-        bot.send_message(chat_id=update.effective_chat.id, text=f"❌ **ব্যর্থ!**\n\n{result['data']}")
-        return
-
-    links = result["data"]
-    if not links:
-        bot.send_message(chat_id=update.effective_chat.id, text="❌ কোনো ডাউনলোড লিংক পাওয়া যায়নি।")
-        return
-
-    # রেসপন্স তৈরি
-    reply = "✅ **ডাউনলোড লিংক সমূহ:**\n\n"
-    for i, link in enumerate(links, 1):
-        reply += f"{i}. **{link['type']}** – `{link['url']}`\n"
-
-    # মেসেজ খুব বড় হলে split করে পাঠানো
-    if len(reply) > 4000:
-        for chunk in [reply[i:i+4000] for i in range(0, len(reply), 4000)]:
-            bot.send_message(chat_id=update.effective_chat.id, text=chunk, disable_web_page_preview=True)
-    else:
-        bot.send_message(chat_id=update.effective_chat.id, text=reply, disable_web_page_preview=True)
-
-def unknown(bot: Bot, update: Update):
-    bot.send_message(chat_id=update.effective_chat.id, text="❓ /help দিন সাহায্যের জন্য।")
+def send_telegram_message(chat_id: int, text: str, parse_mode: str = "Markdown", disable_web_page_preview: bool = False):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": disable_web_page_preview
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
 
 # ============================================================
-# 🚀 Flask অ্যাপ + ডিসপ্যাচার (Vercel-এর জন্য)
+# 🤖 ফ্লাস্ক অ্যাপ (Vercel ওয়েবহুক)
 # ============================================================
 
 application = Flask(__name__)
-bot = Bot(token=BOT_TOKEN)
-
-# ডিসপ্যাচার তৈরি (সিঙ্ক্রোনাস)
-dispatcher = Dispatcher(bot, None, use_context=False)
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("help", help_command))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-dispatcher.add_handler(MessageHandler(filters.COMMAND, unknown))
 
 @application.route('/', methods=['GET'])
 def index():
@@ -220,10 +179,70 @@ def webhook():
         if not body:
             return "Invalid request", 400
 
-        update = Update.de_json(body, bot)
-        # সিঙ্ক্রোনাসভাবে ডিসপ্যাচার দিয়ে প্রসেস
-        dispatcher.process_update(update)
+        # মেসেজের ডেটা বের করা
+        message = body.get('message')
+        if not message:
+            return "No message", 200
+
+        chat_id = message.get('chat', {}).get('id')
+        if not chat_id:
+            return "No chat_id", 200
+
+        # কমান্ড বা টেক্সট প্রসেস
+        text = message.get('text', '')
+        if not text:
+            send_telegram_message(chat_id, "❌ শুধু টেক্সট মেসেজ গ্রহণ করি।")
+            return "OK", 200
+
+        # কমান্ড হ্যান্ডলিং
+        if text.startswith('/'):
+            if text == '/start':
+                send_telegram_message(
+                    chat_id,
+                    "👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.one/drive/xxxxx`"
+                )
+            elif text == '/help':
+                send_telegram_message(
+                    chat_id,
+                    "📖 **কীভাবে ব্যবহার করবেন:**\n1️⃣ HubCloud লিংক পাঠান (টেক্সট মেসেজ হিসেবে)\n2️⃣ আমি সব ডাউনলোড লিংক বের করব\n\n🔰 **সাপোর্টেড লিংক:**\n- hubcloud.one\n- vifix.site/hubcloud/xxxxx"
+                )
+            else:
+                send_telegram_message(chat_id, "❓ অজানা কমান্ড। /help দিন সাহায্যের জন্য।")
+            return "OK", 200
+
+        # লিংক চেক
+        if not re.match(r'^https?://', text):
+            send_telegram_message(chat_id, "❌ দয়া করে একটি বৈধ URL দিন (http:// বা https:// দিয়ে শুরু)।")
+            return "OK", 200
+
+        # প্রসেসিং শুরু
+        send_telegram_message(chat_id, "⏳ বাইপাস করা হচ্ছে, একটু অপেক্ষা করুন...")
+
+        result = bypass_hubcloud(text)
+
+        if not result["success"]:
+            send_telegram_message(chat_id, f"❌ **ব্যর্থ!**\n\n{result['data']}")
+            return "OK", 200
+
+        links = result["data"]
+        if not links:
+            send_telegram_message(chat_id, "❌ কোনো ডাউনলোড লিংক পাওয়া যায়নি।")
+            return "OK", 200
+
+        # রেসপন্স তৈরি
+        reply = "✅ **ডাউনলোড লিংক সমূহ:**\n\n"
+        for i, link in enumerate(links, 1):
+            reply += f"{i}. **{link['type']}** – `{link['url']}`\n"
+
+        # মেসেজ খুব বড় হলে split করে পাঠানো
+        if len(reply) > 4000:
+            for chunk in [reply[i:i+4000] for i in range(0, len(reply), 4000)]:
+                send_telegram_message(chat_id, chunk, disable_web_page_preview=True)
+        else:
+            send_telegram_message(chat_id, reply, disable_web_page_preview=True)
+
         return "OK", 200
+
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return f"Error: {str(e)}", 500
