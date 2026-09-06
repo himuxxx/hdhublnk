@@ -1,12 +1,10 @@
 import os
 import re
-import asyncio
 import logging
 import requests
 from flask import Flask, request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from urllib.parse import urljoin, urlparse
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -16,13 +14,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 🔥 HubCloud Bypasser লজিক (HTML থেকে কনভার্ট করা)
+# 🔥 HubCloud Bypass লজিক (HTML থেকে নেওয়া)
 # ============================================================
 
 def extract_links_from_html(html: str, base_url: str) -> list:
     """HTML থেকে সব <a> ট্যাগের href এবং text বের করে"""
     links = []
-    # <a> ট্যাগ খোঁজা (সহজ regex)
     pattern = r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'
     matches = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
     for href, text in matches:
@@ -58,7 +55,6 @@ def bypass_hubcloud(url: str) -> dict:
         all_links = extract_links_from_html(html1, target_url)
         download_node = None
         for link in all_links:
-            # href এ 'download' আছে কিনা অথবা টেক্সটে Download আছে
             if 'download' in link['href'].lower() or 'download' in link['text'].lower():
                 download_node = link
                 break
@@ -69,10 +65,10 @@ def bypass_hubcloud(url: str) -> dict:
         hubcloud_php_url = download_node['href']
         # relative URL ঠিক করা
         if hubcloud_php_url.startswith('/'):
-            parsed = urlparse(target_url)
+            parsed = requests.utils.urlparse(target_url)
             hubcloud_php_url = f"{parsed.scheme}://{parsed.netloc}{hubcloud_php_url}"
         elif not hubcloud_php_url.startswith('http'):
-            hubcloud_php_url = urljoin(target_url, hubcloud_php_url)
+            hubcloud_php_url = requests.utils.urljoin(target_url, hubcloud_php_url)
 
         logger.info(f"Found hubcloud.php URL: {hubcloud_php_url}")
 
@@ -150,44 +146,38 @@ def bypass_hubcloud(url: str) -> dict:
         return {"success": False, "data": f"⚠️ অজানা ত্রুটি: {str(e)}"}
 
 # ============================================================
-# 🤖 টেলিগ্রাম হ্যান্ডলার
+# 🤖 সিঙ্ক্রোনাস টেলিগ্রাম হ্যান্ডলার (async ছাড়া)
 # ============================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 **HubCloud Bypasser Bot**\n\n"
-        "আমাকে একটি HubCloud লিংক পাঠান।\n"
-        "আমি সব ডাউনলোড লিংক বের করে দেব।\n\n"
-        "যেমন: `https://hubcloud.one/drive/xxxxx`"
+def start(bot: Bot, update: Update):
+    bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.one/drive/xxxxx`"
     )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📖 **কীভাবে ব্যবহার করবেন:**\n"
-        "1️⃣ HubCloud লিংক পাঠান (টেক্সট মেসেজ হিসেবে)\n"
-        "2️⃣ আমি সব ডাউনলোড লিংক বের করব\n\n"
-        "🔰 **সাপোর্টেড লিংক:**\n"
-        "- hubcloud.one\n"
-        "- vifix.site/hubcloud/xxxxx"
+def help_command(bot: Bot, update: Update):
+    bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📖 **কীভাবে ব্যবহার করবেন:**\n1️⃣ HubCloud লিংক পাঠান (টেক্সট মেসেজ হিসেবে)\n2️⃣ আমি সব ডাউনলোড লিংক বের করব\n\n🔰 **সাপোর্টেড লিংক:**\n- hubcloud.one\n- vifix.site/hubcloud/xxxxx"
     )
 
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_link(bot: Bot, update: Update):
     user_input = update.message.text.strip()
     if not re.match(r'^https?://', user_input):
-        await update.message.reply_text("❌ দয়া করে একটি বৈধ URL দিন (http:// বা https:// দিয়ে শুরু)।")
+        bot.send_message(chat_id=update.effective_chat.id, text="❌ দয়া করে একটি বৈধ URL দিন (http:// বা https:// দিয়ে শুরু)।")
         return
 
-    await update.message.reply_text("⏳ বাইপাস করা হচ্ছে, একটু অপেক্ষা করুন...")
+    bot.send_message(chat_id=update.effective_chat.id, text="⏳ বাইপাস করা হচ্ছে, একটু অপেক্ষা করুন...")
 
     result = bypass_hubcloud(user_input)
 
     if not result["success"]:
-        await update.message.reply_text(f"❌ **ব্যর্থ!**\n\n{result['data']}")
+        bot.send_message(chat_id=update.effective_chat.id, text=f"❌ **ব্যর্থ!**\n\n{result['data']}")
         return
 
     links = result["data"]
     if not links:
-        await update.message.reply_text("❌ কোনো ডাউনলোড লিংক পাওয়া যায়নি।")
+        bot.send_message(chat_id=update.effective_chat.id, text="❌ কোনো ডাউনলোড লিংক পাওয়া যায়নি।")
         return
 
     # রেসপন্স তৈরি
@@ -198,26 +188,26 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # মেসেজ খুব বড় হলে split করে পাঠানো
     if len(reply) > 4000:
         for chunk in [reply[i:i+4000] for i in range(0, len(reply), 4000)]:
-            await update.message.reply_text(chunk, disable_web_page_preview=True)
+            bot.send_message(chat_id=update.effective_chat.id, text=chunk, disable_web_page_preview=True)
     else:
-        await update.message.reply_text(reply, disable_web_page_preview=True)
+        bot.send_message(chat_id=update.effective_chat.id, text=reply, disable_web_page_preview=True)
 
-async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ /help দিন সাহায্যের জন্য।")
+def unknown(bot: Bot, update: Update):
+    bot.send_message(chat_id=update.effective_chat.id, text="❓ /help দিন সাহায্যের জন্য।")
 
 # ============================================================
-# 🚀 টেলিগ্রাম অ্যাপ্লিকেশন + Flask Webhook (Vercel)
+# 🚀 Flask অ্যাপ + ডিসপ্যাচার (Vercel-এর জন্য)
 # ============================================================
-
-telegram_app = Application.builder().token(BOT_TOKEN).build()
-asyncio.run(telegram_app.initialize())
-
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("help", help_command))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
 application = Flask(__name__)
+bot = Bot(token=BOT_TOKEN)
+
+# ডিসপ্যাচার তৈরি (সিঙ্ক্রোনাস)
+dispatcher = Dispatcher(bot, None, use_context=False)
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("help", help_command))
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+dispatcher.add_handler(MessageHandler(filters.COMMAND, unknown))
 
 @application.route('/', methods=['GET'])
 def index():
@@ -230,13 +220,9 @@ def webhook():
         if not body:
             return "Invalid request", 400
 
-        update = Update.de_json(body, telegram_app.bot)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(telegram_app.process_update(update))
-        finally:
-            loop.close()
+        update = Update.de_json(body, bot)
+        # সিঙ্ক্রোনাসভাবে ডিসপ্যাচার দিয়ে প্রসেস
+        dispatcher.process_update(update)
         return "OK", 200
     except Exception as e:
         logger.error(f"Webhook error: {e}")
