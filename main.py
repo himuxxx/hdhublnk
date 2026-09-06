@@ -3,6 +3,7 @@ import re
 import json
 import logging
 import requests
+import cloudscraper
 from flask import Flask, request
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -13,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 🔥 HubCloud Bypass লজিক (HTML থেকে নেওয়া)
+# 🔥 HubCloud Bypass (Cloudflare সাপোর্ট সহ)
 # ============================================================
 
 def extract_links_from_html(html: str) -> list:
@@ -29,23 +30,30 @@ def extract_links_from_html(html: str) -> list:
 def bypass_hubcloud(url: str) -> dict:
     """
     HubCloud লিংক বাইপাস করে সব ডাউনলোড লিংক বের করে।
+    cloudscraper ব্যবহার করে Cloudflare বাইপাস করে।
     """
     try:
-        headers = {
+        # ✅ Cloudscraper সেশন তৈরি
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            }
+        )
+        scraper.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        session = requests.Session()
-        session.headers.update(headers)
+        })
 
         # ১. vifix.site কে hubcloud.one-এ রূপান্তর
         target_url = url
         if re.match(r'^https://vifix\.site/hubcloud/([a-z0-9]+)$', url, re.IGNORECASE):
             file_id = url.split("/")[-1]
-            target_url = f"https://hubcloud.cx/drive/{file_id}"
+            target_url = f"https://hubcloud.one/drive/{file_id}"
             logger.info(f"Converted vifix.site URL to: {target_url}")
 
-        # ২. প্রথম পেজ ফেচ
-        resp1 = session.get(target_url, timeout=30, allow_redirects=True)
+        # ২. প্রথম পেজ ফেচ (cloudscraper দিয়ে)
+        resp1 = scraper.get(target_url, timeout=30, allow_redirects=True)
         resp1.raise_for_status()
         html1 = resp1.text
 
@@ -70,8 +78,8 @@ def bypass_hubcloud(url: str) -> dict:
 
         logger.info(f"Found hubcloud.php URL: {hubcloud_php_url}")
 
-        # ৪. hubcloud.php পেজ ফেচ
-        resp2 = session.get(hubcloud_php_url, timeout=30, allow_redirects=True)
+        # ৪. hubcloud.php পেজ ফেচ (cloudscraper দিয়ে)
+        resp2 = scraper.get(hubcloud_php_url, timeout=30, allow_redirects=True)
         resp2.raise_for_status()
         html2 = resp2.text
 
@@ -136,6 +144,9 @@ def bypass_hubcloud(url: str) -> dict:
 
         return {"success": True, "data": direct_links}
 
+    except cloudscraper.exceptions.CloudflareChallengeError as e:
+        logger.error(f"Cloudflare challenge error: {e}")
+        return {"success": False, "data": "⚠️ Cloudflare চ্যালেঞ্জ পার হওয়া যায়নি।"}
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error: {e}")
         return {"success": False, "data": f"🌐 নেটওয়ার্ক এরর: {str(e)}"}
@@ -179,7 +190,6 @@ def webhook():
         if not body:
             return "Invalid request", 400
 
-        # মেসেজের ডেটা বের করা
         message = body.get('message')
         if not message:
             return "No message", 200
@@ -188,7 +198,6 @@ def webhook():
         if not chat_id:
             return "No chat_id", 200
 
-        # কমান্ড বা টেক্সট প্রসেস
         text = message.get('text', '')
         if not text:
             send_telegram_message(chat_id, "❌ শুধু টেক্সট মেসেজ গ্রহণ করি।")
@@ -199,7 +208,7 @@ def webhook():
             if text == '/start':
                 send_telegram_message(
                     chat_id,
-                    "👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.cx/drive/xxxxx`"
+                    "👋 **HubCloud Bypasser Bot**\n\nআমাকে একটি HubCloud লিংক পাঠান।\nআমি সব ডাউনলোড লিংক বের করে দেব।\n\nযেমন: `https://hubcloud.one/drive/xxxxx`"
                 )
             elif text == '/help':
                 send_telegram_message(
