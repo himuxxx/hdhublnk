@@ -1,8 +1,7 @@
 import os
 import re
-import json
-import logging
 import asyncio
+import logging
 import requests
 from flask import Flask, request
 from telegram import Update
@@ -13,70 +12,50 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN environment variable is not set!")
 
-# লগিং সেটআপ
+# ⚠️ IMPORTANT: নিচে আপনার ডিপ্লয় করা API-এর URL বসান
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://hdhub-bypass-api-yourname.vercel.app")
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ========== HubCloud Bypass ফাংশন (স্মার্ট ভার্সন) ==========
+# ========== API-ভিত্তিক Bypass ফাংশন ==========
 def bypass_hubcloud(url: str) -> dict:
     """
-    HubCloud লিংক বাইপাস করে। 
-    প্রথমে পেজ থেকে লিংক খোঁজে, না পেলে রিডাইরেক্ট ফলো করে।
+    HDhub-bypass-api ব্যবহার করে ডাউনলোড লিংক বের করে।
     """
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        # রিডাইরেক্ট ফলো সহ GET request
-        response = requests.get(url, headers=headers, allow_redirects=True, timeout=30)
+        api_endpoint = f"{API_BASE_URL}/find"
+        
+        # POST method ব্যবহার করছি (JSON body সহ)
+        response = requests.post(
+            api_endpoint,
+            json={"url": url},
+            timeout=30
+        )
         response.raise_for_status()
-
-        html = response.text
-
-        # প্যাটার্ন লিস্ট (আরও কম্প্রিহেন্সিভ)
-        patterns = [
-            # <a> ট্যাগে download, direct link ইত্যাদি
-            r'<a[^>]+href=["\'](https?://[^"\']+download[^"\']+)["\'][^>]*>',
-            r'<a[^>]+href=["\'](https?://[^"\']+\.(?:mkv|mp4|avi|zip|rar|7z|exe|apk)[^"\']*)["\'][^>]*>',
-            # window.location বা window.open জাভাস্ক্রিপ্ট রিডাইরেক্ট
-            r'window\.location\s*=\s*["\'](https?://[^"\']+)["\']',
-            r'window\.open\s*\(\s*["\'](https?://[^"\']+)["\']',
-            # Meta refresh রিডাইরেক্ট
-            r'<meta[^>]+http-equiv=["\']refresh["\'][^>]+content=["\'][^"]*url=(https?://[^"\']+)["\']',
-            # iframe-এর মধ্যে থাকতে পারে
-            r'<iframe[^>]+src=["\'](https?://[^"\']+)["\'][^>]*>',
-            # শুধু "href" যেখানে text এ "Download" বা "Link" আছে
-            r'href=["\'](https?://[^"\']+)["\'][^>]*>(?:[^<]*Download[^<]*)',
-        ]
-
-        for pattern in patterns:
-            matches = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
-            if matches:
-                # প্রথম ম্যাচকেই প্রাধান্য দিচ্ছি
-                direct_link = matches[0]
-                if isinstance(direct_link, tuple):
-                    direct_link = direct_link[0]
-                # যদি লিংকে "http" না থাকে তাহলে স্কিপ
-                if direct_link.startswith(("http://", "https://")):
-                    return {"success": True, "data": direct_link}
-
-        # ২. যদি কোনো প্যাটার্ন না মেলে, তাহলে চূড়ান্ত রিডাইরেক্টেড URL রিটার্ন করি (যদি পরিবর্তন হয়)
-        if response.url != url:
-            return {"success": True, "data": response.url}
-
-        # ৩. কিছুই না পেলে
-        return {"success": False, "data": "❌ কোনো ডাউনলোড লিংক খুঁজে পাওয়া যায়নি। পেজটি চেক করুন।"}
-
-    except requests.exceptions.Timeout:
-        return {"success": False, "data": "⏰ টাইমআউট! সার্ভার স্লো অথবা লিংকটি মৃত।"}
-    except requests.exceptions.ConnectionError:
-        return {"success": False, "data": "🌐 সংযোগ সমস্যা! লিংকটি সঠিক কিনা যাচাই করুন।"}
+        
+        data = response.json()
+        
+        # API রেসপন্স থেকে লিংক এক্সট্র্যাক্ট
+        if data.get("links") and len(data["links"]) > 0:
+            # প্রথম লিংকটি নিচ্ছি
+            first_link = data["links"][0]
+            return {
+                "success": True,
+                "data": first_link.get("url", "❌ লিংক পাওয়া যায়নি।")
+            }
+        else:
+            return {
+                "success": False,
+                "data": "❌ এই পেজ থেকে কোনো ডাউনলোড লিংক বের করা সম্ভব হয়নি।"
+            }
+            
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error: {e}")
-        return {"success": False, "data": f"⚠️ নেটওয়ার্ক এরর: {str(e)}"}
+        return {"success": False, "data": f"🌐 নেটওয়ার্ক এরর: {str(e)}"}
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         return {"success": False, "data": f"⚠️ অজানা ত্রুটি: {str(e)}"}
@@ -84,20 +63,20 @@ def bypass_hubcloud(url: str) -> dict:
 # ========== টেলিগ্রাম হ্যান্ডলার ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "👋 **হ্যালো! আমি HubCloud Bypasser Bot**\n\n"
-        "আমাকে যেকোনো HubCloud বা শর্টনিং লিংক পাঠান।\n"
+        "👋 **হ্যালো! আমি HDHub Bypasser Bot**\n\n"
+        "আমাকে যেকোনো HDHub বা শর্টনিং লিংক পাঠান।\n"
         "আমি বাইপাস করে সরাসরি ডাউনলোড লিংক বের করে দেব।\n\n"
-        "যেমন: `https://hubcloud.one/xxxxx`"
+        "যেমন: `https://hdhub4u.catering/xyz` অথবা `https://gadgetsweb.xyz/?id=...`"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📖 **কীভাবে ব্যবহার করবেন:**\n"
         "1️⃣ আমাকে একটি লিংক পাঠান (টেক্সট মেসেজ হিসেবে)।\n"
-        "2️⃣ আমি স্বয়ংক্রিয়ভাবে বাইপাস করব।\n"
-        "3️⃣ ডাউনলোড লিংক পেয়ে গেলে আমি তা পাঠিয়ে দেব।\n\n"
+        "2️⃣ আমি API-এর মাধ্যমে বাইপাস করব।\n"
+        "3️⃣ ডাউনলোড লিংক পেয়ে গেলে আমি তা পাঠিয়ে দেব।\n\n"
         "🔰 **উদাহরণ:**\n"
-        "`https://hubcloud.one/abc123`"
+        "`https://hdhub4u.catering/avengers-endgame/`"
     )
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -105,7 +84,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     
     # URL ভ্যালিডেশন
     if not re.match(r'^https?://', user_input):
-        await update.message.reply_text("❌ দয়া করে একটি বৈধ URL দিন (http:// বা https:// দিয়ে শুরু)।")
+        await update.message.reply_text("❌ দয়া করে একটি বৈধ URL দিন (http:// বা https:// দিয়ে শুরু)।")
         return
 
     # প্রসেসিং মেসেজ
@@ -124,7 +103,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         reply = (
             f"❌ **বাইপাস ব্যর্থ!**\n\n"
             f"⚠️ **কারণ:** {result['data']}\n\n"
-            f"💡 অন্য কোনো লিংক চেষ্টা করুন অথবা ম্যানুয়ালি চেক করুন।"
+            f"💡 অন্য কোনো লিংক চেষ্টা করুন অথবা ম্যানুয়ালি চেক করুন।"
         )
         await processing_msg.edit_text(reply)
 
@@ -138,33 +117,28 @@ application.add_handler(CommandHandler("help", help_command))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 application.add_handler(MessageHandler(filters.COMMAND, unknown))
 
-# ========== VERCEL / FLASK ওয়েবহুক হ্যান্ডলার ==========
+# ========== VERCEL / FLASK ওয়েবহুক হ্যান্ডলার ==========
 app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
 def index():
-    return "🤖 HubCloud Bypasser Bot is running on Vercel!"
+    return "🤖 HDHub Bypasser Bot is running on Vercel!"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Telegram থেকে আসা POST ডেটা প্রসেস করে"""
     try:
-        # টেলিগ্রামের JSON বডি পড়ি
         body = request.get_json(force=True)
         if not body:
             return "Invalid request", 400
 
-        # Update অবজেক্ট তৈরি করি
         update = Update.de_json(body, application.bot)
-        
-        # নোট: process_update হল async, তাই asyncio.run() দিয়ে চালাতে হবে
         asyncio.run(application.process_update(update))
-        
         return "OK", 200
     except Exception as e:
         logger.error(f"Webhook processing error: {e}")
         return f"Error: {str(e)}", 500
 
-# লোকাল টেস্টের জন্য (শুধু দরকার হলে)
+# লোকাল টেস্টের জন্য
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
