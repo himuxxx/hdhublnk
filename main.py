@@ -67,7 +67,9 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== টেলিগ্রাম অ্যাপ্লিকেশন ==========
 telegram_app = Application.builder().token(BOT_TOKEN).build()
-telegram_app.initialize()  # ✅ এই লাইনটি যোগ করুন
+
+# ✅ সঠিকভাবে initialize করা (async রান করানো)
+asyncio.run(telegram_app.initialize())  # এটা এখন ঠিক কাজ করবে
 
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", help_command))
@@ -89,6 +91,7 @@ def webhook():
             return "Invalid request", 400
 
         update = Update.de_json(body, telegram_app.bot)
+        # process_update অবশ্যই async – তাই asyncio.run() ব্যবহার
         asyncio.run(telegram_app.process_update(update))
         return "OK", 200
     except Exception as e:
