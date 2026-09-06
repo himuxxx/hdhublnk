@@ -67,6 +67,8 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== টেলিগ্রাম অ্যাপ্লিকেশন ==========
 telegram_app = Application.builder().token(BOT_TOKEN).build()
+telegram_app.initialize()  # ✅ এই লাইনটি যোগ করুন
+
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
